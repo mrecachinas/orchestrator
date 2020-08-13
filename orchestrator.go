@@ -10,18 +10,19 @@ import (
 
 	flag "github.com/spf13/pflag"
 	"github.com/streadway/amqp"
+	"go.uber.org/zap"
 )
 
 type JSONTime time.Time
 
 func (j JSONTime) MarshalJSON() ([]byte, error) {
-	stamp := fmt.Sprintf("\"%s\"", time.Time(j).Format("2006-01-02T15:04:05.000"))
+	stamp := time.Time(j).Format("2006-01-02T15:04:05.000000")
 	return []byte(stamp), nil
 }
 
 func (j *JSONTime) UnmarshalJSON(b []byte) error {
 	s := strings.Trim(string(b), "\"")
-	t, err := time.Parse("2006-01-02T15:04:05.000", s)
+	t, err := time.Parse("2006-01-02T15:04:05.000000", s)
 	if err != nil {
 		return err
 	}
@@ -32,14 +33,6 @@ func (j *JSONTime) UnmarshalJSON(b []byte) error {
 type SubRecord struct {
 	StartTime JSONTime `json:"start_time"`
 	StopTime  JSONTime `json:"stop_time"`
-}
-
-func (s *SubRecord) MarshalJSON() ([]byte, error) {
-
-}
-
-func (s *SubRecord) UnmarshalJSON(b []byte) error {
-
 }
 
 type Message struct {

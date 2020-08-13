@@ -70,25 +70,25 @@ func NewMessageHandler() MessageHandler {
 	}
 }
 
-func failOnError(err error, msg string) {
+func failOnError(logger *zap.Logger, err error, msg string) {
 	if err != nil {
-		log.Fatalf("%s: %s", msg, err)
+		logger.Fatal(msg, zap.Error(err))
 	}
 }
 
-func handleMessages(channel amqp.Channel, msgs <-chan amqp.Delivery, exchange string) {
+func handleMessages(logger zap.Logger, channel *amqp.Channel, msgs <-chan amqp.Delivery, exchange string) {
 	// Setup our data structure that will hold the messages,
 	// channel, and goroutines
 	bucketMap := make(map[SpecialKey]MessageHandler)
 
 	for msg := range msgs {
-		log.Printf("Received a message: %s", msg.Body)
+		logger.Info("Received a message", zap.ByteString("body", msg.Body))
 
 		// Deserialize message body to our Message struct
 		var message Message
 		unmarshalErr := json.Unmarshal(msg.Body, &message)
 		if unmarshalErr != nil {
-			log.Fatal("Oh noes")
+			logger.Error("Error unmarshalling message", zap.Error(unmarshalErr), zap.ByteString("body", msg.Body))
 			continue
 		}
 
@@ -96,12 +96,19 @@ func handleMessages(channel amqp.Channel, msgs <-chan amqp.Delivery, exchange st
 		key := SpecialKey{
 			UID1: message.UID1,
 		}
+		startTime, _ := message.StartTime.MarshalJSON()
+		logger.Info(
+			"Looking for key in bucketMap",
+			zap.String("uid1", key.UID1),
+			zap.ByteString("start_time", startTime),
+		)
 
 		// Check if `key` is already in `bucketMap`:
 		// if not, add it as a new key and initiate the processing;
-		if _, ok := bucketMap[key]; ok {
+		if _, ok := bucketMap[key]; !ok {
+			logger.Info("Key not in bucketMap... creating", zap.String("uid1", key.UID1))
 			bucketMap[key] = NewMessageHandler()
-			go bucketMap[key].StartProcessing(channel, exchange)
+			go bucketMap[key].StartProcessing(logger, channel, exchange)
 		}
 
 		// Now that bucketMap[key] exists and is
@@ -111,7 +118,7 @@ func handleMessages(channel amqp.Channel, msgs <-chan amqp.Delivery, exchange st
 		// If we've made it this far, ACK the message
 		ackErr := msg.Ack(false)
 		if ackErr != nil {
-			log.Fatalf("Error ACK-ing message: %s", ackErr)
+			logger.Error("Error ACK-ing message", zap.Error(ackErr), zap.ByteString("body", msg.Body))
 			continue
 		}
 	}
@@ -126,16 +133,27 @@ func main() {
 	amqpOutExchange := flag.StringP("amqp-out-exchange", "e", "test_exchange", "Exchange name")
 	flag.Parse()
 
+	// Setup logging
+	logger, zapErr := zap.NewProduction()
+	if zapErr != nil {
+		log.Fatalf("Failed to instantiate Zap Logging: %s\n", zapErr)
+	}
+
+	// Setup AMQP connection
 	amqpUri := fmt.Sprintf("amqp://%s:%s@%s:%d", *amqpUser, *amqpPass, *amqpHost, *amqpPort)
-	fmt.Println(amqpUri)
+	logger.Info("Connecting to AMQP", zap.String("amqpUri", amqpUri))
 
 	conn, err := amqp.Dial(amqpUri)
-	failOnError(err, "Failed to connect to RabbitMQ")
+	failOnError(logger, err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
 
+	logger.Info("Opening channel", zap.String("amqpUri", amqpUri))
+
 	ch, err := conn.Channel()
-	failOnError(err, "Failed to open a channel")
+	failOnError(logger, err, "Failed to open a channel")
 	defer ch.Close()
+
+	logger.Info("Opening channel", zap.String("amqpUri", amqpUri))
 
 	q, err := ch.QueueDeclare(
 		*amqpInQueue, // name
@@ -147,14 +165,14 @@ func main() {
 			"x-message-ttl": 3600000,
 		}, // arguments
 	)
-	failOnError(err, "Failed to declare a queue")
+	failOnError(logger, err, "Failed to declare a queue")
 
 	err = ch.Qos(
 		1,     // prefetch count
 		0,     // prefetch size
 		false, // global
 	)
-	failOnError(err, "Failed to set QoS")
+	failOnError(logger, err, "Failed to set QoS")
 
 	err = ch.ExchangeDeclare(
 		*amqpOutExchange, // name
@@ -165,7 +183,7 @@ func main() {
 		false,            // no-wait
 		nil,              // arguments
 	)
-	failOnError(err, "Failed to declare an exchange")
+	failOnError(logger, err, "Failed to declare an exchange")
 
 	msgs, err := ch.Consume(
 		q.Name, // queue
@@ -176,12 +194,12 @@ func main() {
 		false,  // no-wait
 		nil,    // args
 	)
-	failOnError(err, "Failed to register a consumer")
+	failOnError(logger, err, "Failed to register a consumer")
 
 	forever := make(chan bool)
 
-	go handleMessages(*ch, msgs, *amqpOutExchange)
+	go handleMessages(*logger, ch, msgs, *amqpOutExchange)
 
-	log.Println("Starting orchestrator")
+	logger.Info("Starting orchestrator")
 	<-forever
 }

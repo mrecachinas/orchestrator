@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	//"bytes"
 	"fmt"
-	flag "github.com/spf13/pflag"
-	"github.com/streadway/amqp"
 	"log"
 	"strings"
 	"time"
+
+	flag "github.com/spf13/pflag"
+	"github.com/streadway/amqp"
 )
 
 type JSONTime time.Time
@@ -41,7 +42,7 @@ func (s *SubRecord) UnmarshalJSON(b []byte) error {
 
 }
 
-type MessageType struct {
+type Message struct {
 	StartTime JSONTime    `json:"start_time"`
 	StopTime  JSONTime    `json:"stop_time"`
 	UID1      string      `json:"uid1"`
@@ -53,57 +54,83 @@ type SpecialKey struct {
 	UID1 string
 }
 
+type MessageHandler struct {
+	Channel chan<- Message
+}
+
+func (handler MessageHandler) StartProcessing(outputChan amqp.Channel, exchange string) {
+	// err := ch.Publish(
+	// 	exchange, // exchange
+	// 	"",       // routing key
+	// 	false,    // mandatory
+	// 	false,    // immediate
+	// 	amqp.Publishing{
+	// 		ContentType: "text/json",
+	// 		Body:        []byte(body),
+	// 	})
+	// failOnError(err, "Failed to publish a message")
+}
+
+func NewMessageHandler() MessageHandler {
+	return MessageHandler{
+		Channel: make(chan Message, 10),
+	}
+}
+
 func failOnError(err error, msg string) {
 	if err != nil {
 		log.Fatalf("%s: %s", msg, err)
 	}
 }
 
-func orchestrate() {
+func handleMessages(channel amqp.Channel, msgs <-chan amqp.Delivery, exchange string) {
+	// Setup our data structure that will hold the messages,
+	// channel, and goroutines
+	bucketMap := make(map[SpecialKey]MessageHandler)
 
-}
-
-func handleMessages(msgs <-chan amqp.Delivery, exchange string) {
-	bucketMap := make(map[SpecialKey]chan MessageType)
 	for msg := range msgs {
 		log.Printf("Received a message: %s", msg.Body)
-		// Deserialize message body to our MessageType struct
-		var message MessageType
+
+		// Deserialize message body to our Message struct
+		var message Message
 		unmarshalErr := json.Unmarshal(msg.Body, &message)
 		if unmarshalErr != nil {
 			log.Fatal("Oh noes")
+			continue
 		}
 
-		// Dump into corresponding subrecord
+		// Convert message fields into key into bucketMap
 		key := SpecialKey{
 			UID1: message.UID1,
 		}
-		bucketMap[key] = make(chan MessageType, 10)
-		bucketMap[key] <- message
 
-		err := ch.Publish(
-			exchange, // exchange
-			"",       // routing key
-			false,    // mandatory
-			false,    // immediate
-			amqp.Publishing{
-				ContentType: "text/json",
-				Body:        []byte(body),
-			})
-		failOnError(err, "Failed to publish a message")
+		// Check if `key` is already in `bucketMap`:
+		// if not, add it as a new key and initiate the processing;
+		if _, ok := bucketMap[key]; ok {
+			bucketMap[key] = NewMessageHandler()
+			go bucketMap[key].StartProcessing(channel, exchange)
+		}
+
+		// Now that bucketMap[key] exists and is
+		// processing, push the message onto the channel
+		bucketMap[key].Channel <- message
+
+		// If we've made it this far, ACK the message
 		ackErr := msg.Ack(false)
 		if ackErr != nil {
-			failOnError(err, "Error ACK-ing message")
+			log.Fatalf("Error ACK-ing message: %s", ackErr)
+			continue
 		}
 	}
 }
 func main() {
+	// Setup and parse the command-line flags
 	amqpHost := flag.StringP("amqp-host", "i", "localhost", "Host for RMQ")
 	amqpPort := flag.IntP("amqp-port", "p", 5672, "Port for RMQ")
 	amqpUser := flag.StringP("amqp-user", "u", "guest", "User for RMQ")
 	amqpPass := flag.StringP("amqp-pass", "P", "guest", "Password for RMQ")
-	amqpInQueue := flag.StringP("amqp-in-queue", "q", "test", "Queue name")
-	amqpOutExchange := flag.StringP("amqp-out-exchange", "e", "test", "Exchange name")
+	amqpInQueue := flag.StringP("amqp-in-queue", "q", "test_queue", "Queue name")
+	amqpOutExchange := flag.StringP("amqp-out-exchange", "e", "test_exchange", "Exchange name")
 	flag.Parse()
 
 	amqpUri := fmt.Sprintf("amqp://%s:%s@%s:%d", *amqpUser, *amqpPass, *amqpHost, *amqpPort)
@@ -119,10 +146,10 @@ func main() {
 
 	q, err := ch.QueueDeclare(
 		*amqpInQueue, // name
-		true, // durable
-		false, // delete when unused
-		false, // exclusive
-		false, // no-wait
+		true,         // durable
+		false,        // delete when unused
+		false,        // exclusive
+		false,        // no-wait
 		amqp.Table{
 			"x-message-ttl": 3600000,
 		}, // arguments
@@ -138,30 +165,30 @@ func main() {
 
 	err = ch.ExchangeDeclare(
 		*amqpOutExchange, // name
-		"topic", // type
-		true, // durable
-		false, // auto-deleted
-		false, // internal
-		false, // no-wait
-		nil, // arguments
+		"topic",          // type
+		true,             // durable
+		false,            // auto-deleted
+		false,            // internal
+		false,            // no-wait
+		nil,              // arguments
 	)
 	failOnError(err, "Failed to declare an exchange")
 
 	msgs, err := ch.Consume(
 		q.Name, // queue
-		"", // consumer
-		false, // auto-ack
-		false, // exclusive
-		false, // no-local
-		false, // no-wait
-		nil, // args
+		"",     // consumer
+		false,  // auto-ack
+		false,  // exclusive
+		false,  // no-local
+		false,  // no-wait
+		nil,    // args
 	)
 	failOnError(err, "Failed to register a consumer")
 
 	forever := make(chan bool)
 
-	go handleMessages(msgs, *amqpOutExchange)
+	go handleMessages(*ch, msgs, *amqpOutExchange)
 
-	log.Printf("Starting orchestrator")
+	log.Println("Starting orchestrator")
 	<-forever
 }

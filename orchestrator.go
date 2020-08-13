@@ -44,15 +44,33 @@ type Message struct {
 }
 
 type SpecialKey struct {
-	UID1 string
+	UID1 string `json:"uid1"`
 }
 
 type MessageHandler struct {
-	Channel chan<- Message
+	Channel  chan Message
+	Messages []Message
 }
 
-func (handler MessageHandler) StartProcessing(outputChan amqp.Channel, exchange string) {
-	// err := ch.Publish(
+type OutputMessage struct {
+	Location string   `json:"location"`
+	Files    []string `json:"files"`
+}
+
+func (handler MessageHandler) StartProcessing(logger zap.Logger, outputChan *amqp.Channel, exchange string) {
+	// var outputMessage OutputMessage
+	for {
+		select {
+		case msg := <-handler.Channel:
+			logger.Info("Received", zap.String("uid1", msg.UID1))
+		default:
+			// if len(handler.Messages) > 0 && (time.Now() - handler.Messages[0].StartTime) > 5min {
+			// }
+		}
+	}
+
+	// // If we're done, publish, then clear state, and return
+	// err := outputChan.Publish(
 	// 	exchange, // exchange
 	// 	"",       // routing key
 	// 	false,    // mandatory

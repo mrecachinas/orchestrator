@@ -43,13 +43,16 @@ type Message struct {
 	Sub       []SubRecord `json:"sub"`
 }
 
-type SpecialKey struct {
+// BucketKey is a unique key that
+//
+type BucketKey struct {
 	UID1 string `json:"uid1"`
 }
 
 type MessageHandler struct {
-	Channel  chan Message
-	Messages []Message
+	Channel   chan Message
+	Messages  []Message
+	IsRunning bool
 }
 
 type OutputMessage struct {
@@ -97,7 +100,7 @@ func failOnError(logger *zap.Logger, err error, msg string) {
 func handleMessages(logger zap.Logger, channel *amqp.Channel, msgs <-chan amqp.Delivery, exchange string) {
 	// Setup our data structure that will hold the messages,
 	// channel, and goroutines
-	bucketMap := make(map[SpecialKey]MessageHandler)
+	bucketMap := make(map[BucketKey]MessageHandler)
 
 	for msg := range msgs {
 		logger.Info("Received a message", zap.ByteString("body", msg.Body))
@@ -111,7 +114,7 @@ func handleMessages(logger zap.Logger, channel *amqp.Channel, msgs <-chan amqp.D
 		}
 
 		// Convert message fields into key into bucketMap
-		key := SpecialKey{
+		key := BucketKey{
 			UID1: message.UID1,
 		}
 		startTime, _ := message.StartTime.MarshalJSON()

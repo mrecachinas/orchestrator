@@ -1,7 +1,22 @@
 #!/usr/bin/env python
 import datetime
+import random
+
 import kombu
 from kombu.pools import producers
+
+
+uids = [
+    "foo",
+    "bar",
+    "baz",
+    "abc",
+    "def",
+    "ghi",
+    "jkl",
+    "mno",
+    "boogaloo",
+]
 
 
 with kombu.Connection("amqp://guest:guest@localhost:5672") as conn:
@@ -16,7 +31,7 @@ with kombu.Connection("amqp://guest:guest@localhost:5672") as conn:
         while True:
             producer.publish(
                 {
-                    "uid1": "foobar",
+                    "uid1": random.choice(uids),
                     "start_time": datetime.datetime.now() - datetime.timedelta(minutes=5),
                     "stop_time": datetime.datetime.now(),
                 },
@@ -24,10 +39,10 @@ with kombu.Connection("amqp://guest:guest@localhost:5672") as conn:
             )
             producer.publish(
                 {
-                    "uid1": "foobar",
+                    "uid1": random.choice(uids),
                     "start_time": datetime.datetime.now() - datetime.timedelta(minutes=5),
                     "stop_time": datetime.datetime.now(),
                 },
                 exchange=exchange,
             )
-            break
+            # break

@@ -55,9 +55,14 @@ type MessageHandler struct {
 	IsRunning bool
 }
 
+type File struct {
+	Host string `json:"host"`
+	Path string `json:"path"`
+}
+
 type OutputMessage struct {
-	Location string   `json:"location"`
-	Files    []string `json:"files"`
+	Location string `json:"location"`
+	Files    []File `json:"files"`
 }
 
 func (handler MessageHandler) StartProcessing(logger zap.Logger, outputChan *amqp.Channel, exchange string) {
@@ -144,6 +149,7 @@ func handleMessages(logger zap.Logger, channel *amqp.Channel, msgs <-chan amqp.D
 		}
 	}
 }
+
 func main() {
 	// Setup and parse the command-line flags
 	amqpHost := flag.StringP("amqp-host", "i", "localhost", "Host for RMQ")
@@ -161,20 +167,20 @@ func main() {
 	}
 
 	// Setup AMQP connection
-	amqpUri := fmt.Sprintf("amqp://%s:%s@%s:%d", *amqpUser, *amqpPass, *amqpHost, *amqpPort)
-	logger.Info("Connecting to AMQP", zap.String("amqpUri", amqpUri))
+	amqpURI := fmt.Sprintf("amqp://%s:%s@%s:%d", *amqpUser, *amqpPass, *amqpHost, *amqpPort)
+	logger.Info("Connecting to AMQP", zap.String("amqpUri", amqpURI))
 
-	conn, err := amqp.Dial(amqpUri)
+	conn, err := amqp.Dial(amqpURI)
 	failOnError(logger, err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
 
-	logger.Info("Opening channel", zap.String("amqpUri", amqpUri))
+	logger.Info("Opening channel", zap.String("amqpUri", amqpURI))
 
 	ch, err := conn.Channel()
 	failOnError(logger, err, "Failed to open a channel")
 	defer ch.Close()
 
-	logger.Info("Opening channel", zap.String("amqpUri", amqpUri))
+	logger.Info("Opening channel", zap.String("amqpUri", amqpURI))
 
 	q, err := ch.QueueDeclare(
 		*amqpInQueue, // name
